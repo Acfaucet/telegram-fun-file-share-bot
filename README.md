@@ -13,4 +13,4 @@ A fun, community-based file sharing bot for Telegram.
 
 ## Deploy on Render
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Acfaucet/vibeshare)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Acfaucet/telegram-fun-file-share-bot)
