@@ -1,176 +1,200 @@
 import logging
-import asyncio
-from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
-    BotCommand,
-    ReplyKeyboardMarkup,
-    KeyboardButton
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    MessageHandler,
     CallbackQueryHandler,
-    ContextTypes, 
     filters
 )
+import asyncio
 
+# Bot credentials (your actual values)
 BOT_TOKEN = "8201973948:AAFLCmxJ31YQBKPAMfN6fAYMYojV2ZpOLhc"
 PRIVATE_GROUP_CHAT_ID = -2533147454
 ADMIN_CHAT_ID = -2856639895
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# File storage
+file_storage = []
+file_titles = []
 
-# Data store
-files = []
-user_ids = set()
+# Logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-# Command: /start
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_ids.add(update.effective_user.id)
     await update.message.reply_text(
-        "👋 Welcome to the Fun File Share Bot!\n"
-        "You can share fun files with others using /upload or get some using /need_file!",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📤 Upload File"), KeyboardButton("📥 Need File")]],
-            resize_keyboard=True
-        )
+        "🎉 Welcome to the Fun File Share Bot!\n\n"
+        "You can:\n"
+        "📤 Upload a file with /upload\n"
+        "📥 Get a shared file using /need_file",
+        reply_markup=main_menu()
     )
 
-# Command: /upload
+# Main Menu Keyboard
+def main_menu():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("/upload"), KeyboardButton("/need_file")]],
+        resize_keyboard=True
+    )
+
+# Upload command
 async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📢 *Disclaimer!*\n\n"
-        "This is a fun space for everyone. Please don't share any private, illegal, or inappropriate content.",
-        parse_mode="Markdown"
+        "⚠️ Hey there! Before you upload, just a quick heads-up:\n\n"
+        "This is a fun space for everyone. Please don't share any private, illegal, or inappropriate stuff.\n"
+        "Let's keep things awesome for the whole community!"
     )
     await update.message.reply_text("Ready to share something cool? Send me the file now!")
-    context.user_data["uploading"] = True
 
-# Handle file upload
+# Handle incoming files
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("uploading"):
+    file = update.message.document or update.message.photo[-1] or update.message.video
+
+    if not file:
+        await update.message.reply_text("❌ Unsupported file type. Try again.")
         return
 
-    file = update.message.document or update.message.video or update.message.photo[-1] if update.message.photo else None
-    if file:
-        context.user_data["file_id"] = file.file_id
-        await update.message.reply_text("Awesome! Now, give your file a catchy title.")
-        context.user_data["awaiting_title"] = True
-        context.user_data["uploading"] = False
+    context.user_data["file_id"] = file.file_id
+    await update.message.reply_text("Awesome! Now, give your file a catchy title.")
 
 # Handle title
 async def handle_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("awaiting_title"):
-        title = update.message.text
-        file_id = context.user_data.get("file_id")
-        files.append({"title": title, "file_id": file_id})
-        await context.bot.forward_message(chat_id=PRIVATE_GROUP_CHAT_ID, from_chat_id=update.effective_chat.id, message_id=update.message.message_id - 1)
-        await update.message.reply_text(f"Got it! Your file, '{title}', is now ready to share with everyone!")
-        context.user_data.clear()
-
-# Command: /need_file
-async def need_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not files:
-        await update.message.reply_text("Oops! Looks like there aren’t any files yet. Be the first to share one!")
+    if "file_id" not in context.user_data:
         return
-    context.user_data["page"] = 0
-    await send_file_list(update, context)
 
-async def send_file_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    page = context.user_data.get("page", 0)
-    start = page * 20
-    end = start + 20
-    file_buttons = [
-        [InlineKeyboardButton(f["title"], callback_data=f'send_{i}')]
-        for i, f in enumerate(files[start:end], start)
-    ]
-    if end < len(files):
-        file_buttons.append([InlineKeyboardButton("➡ Request more files", callback_data="more_files")])
-    await update.message.reply_text(
-        "🎁 Pick a file from the list below:",
-        reply_markup=InlineKeyboardMarkup(file_buttons)
+    title = update.message.text
+    file_id = context.user_data["file_id"]
+
+    file_storage.append({
+        "title": title,
+        "file_id": file_id
+    })
+
+    await context.bot.forward_message(
+        chat_id=PRIVATE_GROUP_CHAT_ID,
+        from_chat_id=update.effective_chat.id,
+        message_id=update.message.message_id - 1
     )
 
-# Handle inline buttons
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"✅ Got it! Your file, '{title}', is now ready to share with everyone!")
+    context.user_data.clear()
+
+# Need file command
+async def need_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_file_list(update, context, offset=0)
+
+# Send 20 files with offset
+async def send_file_list(update, context, offset):
+    if not file_storage:
+        await update.message.reply_text("Oops! It looks like there aren't any files yet. Be the first to share one!")
+        return
+
+    buttons = []
+    end = min(len(file_storage), offset + 20)
+    for i in range(offset, end):
+        buttons.append([
+            InlineKeyboardButton(file_storage[i]["title"], callback_data=f"sendfile_{i}")
+        ])
+
+    if end < len(file_storage):
+        buttons.append([
+            InlineKeyboardButton("➡️ More Files", callback_data=f"morefiles_{end}")
+        ])
+
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Let's see what's out there! Pick a file from the list below:", reply_markup=reply_markup)
+
+# Callback query
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
 
-    if data.startswith("send_"):
-        index = int(data.split("_")[1])
-        file_data = files[index]
-        msg = await query.message.reply_document(
-            file_id=file_data["file_id"],
-            caption="Here's your file! This will disappear in 5 minutes, so grab it while you can!",
+    if query.data.startswith("sendfile_"):
+        index = int(query.data.split("_")[1])
+        file_info = file_storage[index]
+
+        await context.bot.send_document(
+            chat_id=query.from_user.id,
+            document=file_info["file_id"]
+        )
+        msg = await context.bot.send_message(
+            chat_id=query.from_user.id,
+            text="Here's your file! This will disappear in 5 minutes, so grab it while you can!",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🚩 Report inappropriate file", callback_data=f"report_{index}")]
             ])
         )
         await asyncio.sleep(300)
-        await msg.delete()
+        try:
+            await context.bot.delete_message(chat_id=query.from_user.id, message_id=msg.message_id)
+        except:
+            pass
 
-    elif data == "more_files":
-        context.user_data["page"] += 1
-        await send_file_list(update, context)
+    elif query.data.startswith("morefiles_"):
+        offset = int(query.data.split("_")[1])
+        await send_file_list(query, context, offset)
 
-    elif data.startswith("report_"):
-        index = int(data.split("_")[1])
-        file_data = files[index]
+    elif query.data.startswith("report_"):
+        index = int(query.data.split("_")[1])
+        file_info = file_storage[index]
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text=f"⚠️ *Report Received!*\n\nTitle: {file_data['title']}\nReported by: {update.effective_user.id}",
-            parse_mode="Markdown"
+            text=f"🚨 File reported:\nTitle: {file_info['title']}\nBy user: {query.from_user.id}"
         )
-        await query.message.reply_text("Thanks for looking out for the community! We've received your report.")
+        await context.bot.send_message(
+            chat_id=query.from_user.id,
+            text="Thanks for looking out for the community! We've received your report and will check it out."
+        )
 
-# Command: /broadcast (admin only)
+# Broadcast command (admin only)
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("You're not authorized to use this command.")
         return
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-    msg = "📢 Broadcast:\n" + " ".join(context.args)
-    success = 0
-    for uid in user_ids:
-        try:
-            await context.bot.send_message(uid, msg)
-            success += 1
-        except:
-            continue
-    await update.message.reply_text(f"Broadcast sent to {success} users.")
 
-# Handler for reply keyboard options
-async def reply_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "📤 Upload File":
-        await upload(update, context)
-    elif update.message.text == "📥 Need File":
-        await need_file(update, context)
+    if context.args:
+        message = " ".join(context.args)
+        count = 0
+        for user in set(u.message.chat_id for u in context.bot_data.get("users", [])):
+            try:
+                await context.bot.send_message(chat_id=user, text=f"📢 Broadcast:\n\n{message}")
+                count += 1
+            except:
+                pass
+        await update.message.reply_text(f"Broadcast sent to {count} users.")
+    else:
+        await update.message.reply_text("Please provide a message to broadcast.")
 
-# Main
+# Track all users
+async def track_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.bot_data.setdefault("users", []).append(update)
+
+# Main function
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    await app.bot.set_my_commands([
-        BotCommand("start", "Start the bot"),
-        BotCommand("upload", "Upload a file"),
-        BotCommand("need_file", "Get a shared file"),
-        BotCommand("broadcast", "Broadcast message to all users (admin only)")
-    ])
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("upload", upload))
     app.add_handler(CommandHandler("need_file", need_file))
     app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.Photo.ALL | filters.Video.ALL, handle_file))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply_keyboard_handler))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # File handlers
+    app.add_handler(MessageHandler(
+        filters.Document.ALL | filters.PHOTO | filters.VIDEO,
+        handle_file
+    ))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_title))
+    app.add_handler(MessageHandler(filters.ALL, track_users))
+
     await app.run_polling()
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(main())
-                        
+                               
