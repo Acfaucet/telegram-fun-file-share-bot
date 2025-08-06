@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: telegram-fun-file-share-bot
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    autoDeploy: true
